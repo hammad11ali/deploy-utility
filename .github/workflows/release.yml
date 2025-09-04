@@ -1,0 +1,293 @@
+name: Build and Release ng-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (leave empty for auto-increment)'
+        required: false
+        type: string
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+  push:
+    branches: [ main ]
+    paths:
+      - 'version-new.txt'
+      - 'deploy.py'
+      - 'ng-deploy-installer.wxs'
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  skip-ci:
+    runs-on: ubuntu-latest
+    if: ${{ contains(github.event.head_commit.message, '--skip-ci') || contains(github.event.inputs.version, '--skip-ci') }}
+    steps:
+    - name: Skip CI
+      run: |
+        echo "🚫 CI/CD pipeline skipped due to --skip-ci flag"
+        echo "Commit message: ${{ github.event.head_commit.message }}"
+        echo "Workflow input: ${{ github.event.inputs.version }}"
+
+  build-and-release:
+    runs-on: windows-latest
+    if: ${{ !contains(github.event.head_commit.message, '--skip-ci') && !contains(github.event.inputs.version, '--skip-ci') }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Install PyInstaller
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+
+    - name: Calculate Release Version
+      id: version
+      shell: powershell
+      run: |
+        # Read version files
+        $newVersion = Get-Content "version-new.txt" -Raw | ForEach-Object { $_.Trim() }
+        $currentVersion = Get-Content "version-current.txt" -Raw | ForEach-Object { $_.Trim() }
+        
+        Write-Host "New version from file: $newVersion"
+        Write-Host "Current version from file: $currentVersion"
+        
+        # Manual version override
+        $manualVersion = "${{ github.event.inputs.version }}"
+        if ($manualVersion) {
+          $releaseVersion = $manualVersion.Trim()
+          Write-Host "Using manual version: $releaseVersion"
+        }
+        # Auto-increment logic
+        elseif ($newVersion -eq $currentVersion) {
+          # Parse current version
+          $versionParts = $currentVersion -split '\.'
+          $major = [int]$versionParts[0]
+          $minor = [int]$versionParts[1]
+          $patch = [int]$versionParts[2]
+          
+          # Increment based on release type
+          $releaseType = "${{ github.event.inputs.release_type }}"
+          if (!$releaseType) { $releaseType = "patch" }
+          
+          switch ($releaseType) {
+            "major" { $major++; $minor = 0; $patch = 0 }
+            "minor" { $minor++; $patch = 0 }
+            "patch" { $patch++ }
+          }
+          
+          $releaseVersion = "$major.$minor.$patch"
+          Write-Host "Auto-incremented version ($releaseType): $releaseVersion"
+        }
+        else {
+          $releaseVersion = $newVersion
+          Write-Host "Using new version: $releaseVersion"
+        }
+        
+        # Validate version format
+        if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') {
+          Write-Error "Invalid version format: $releaseVersion"
+          exit 1
+        }
+        
+        # Create 4-part version for WiX (required format)
+        $wixVersion = "$releaseVersion.0"
+        
+        Write-Host "Final release version: $releaseVersion"
+        Write-Host "WiX version: $wixVersion"
+        
+        # Set outputs
+        echo "version=$releaseVersion" >> $env:GITHUB_OUTPUT
+        echo "wix_version=$wixVersion" >> $env:GITHUB_OUTPUT
+        echo "current_version=$currentVersion" >> $env:GITHUB_OUTPUT
+
+    - name: Build Executable with PyInstaller
+      run: |
+        echo "Building ng-deploy.exe..."
+        pyinstaller --onefile --name ng-deploy deploy.py
+        dir dist
+
+    - name: Verify Executable
+      run: |
+        if (!(Test-Path "dist\ng-deploy.exe")) {
+          Write-Error "Failed to build ng-deploy.exe"
+          exit 1
+        }
+        $fileSize = (Get-Item "dist\ng-deploy.exe").Length
+        Write-Host "ng-deploy.exe created successfully ($fileSize bytes)"
+
+    - name: Install WiX Toolset
+      run: |
+        # Download and install WiX 3.11
+        Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311.exe" -OutFile "wix311.exe"
+        Start-Process -FilePath "wix311.exe" -ArgumentList "/quiet" -Wait
+        
+        # Add WiX to PATH
+        $wixPath = "${env:ProgramFiles(x86)}\WiX Toolset v3.11\bin"
+        echo "$wixPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build Windows Installer
+      shell: cmd
+      run: |
+        echo Building Windows Installer with version ${{ steps.version.outputs.wix_version }}
+        
+        REM Compile WiX source with version variable
+        candle.exe ng-deploy-installer.wxs -dProductVersion=${{ steps.version.outputs.wix_version }}
+        
+        REM Link to create MSI
+        light.exe -ext WixUIExtension ng-deploy-installer.wixobj -out ng-deploy-installer.msi
+        
+        REM Verify MSI was created
+        if not exist ng-deploy-installer.msi (
+          echo ERROR: Failed to create MSI installer
+          exit /b 1
+        )
+        
+        dir ng-deploy-installer.msi
+
+    - name: Create Release Notes
+      id: release_notes
+      shell: powershell
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $currentVersion = "${{ steps.version.outputs.current_version }}"
+        
+        $notes = @"
+        # ng-deploy v$version
+        
+        ## 📦 Installation Options
+        
+        ### Windows Installer (Recommended)
+        - Download ``ng-deploy-installer.msi``
+        - Double-click to install
+        - Choose "Add to System PATH" for global access
+        
+        ### Standalone Executable
+        - Download ``ng-deploy.exe``
+        - Place anywhere on your system
+        - No installation required
+        
+        ## 🚀 Quick Start
+        
+        ``````cmd
+        # Configure once
+        ng-deploy config set remote_server 192.168.1.100
+        ng-deploy config set username myuser
+        
+        # Deploy your Angular app
+        ng-deploy akbl mobile
+        ``````
+        
+        ## 📋 What's New
+        
+        - Professional Windows installer with PATH integration
+        - Automatic backup creation with timestamp naming
+        - Enhanced error handling and user feedback
+        - Persistent configuration management
+        - Support for both UNC paths and mapped drives
+        
+        ## 🔧 Requirements
+        
+        - Windows 10 or later
+        - Angular CLI (for builds)
+        - Network access to target server
+        
+        ## 📖 Documentation
+        
+        See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for complete usage guide.
+        "@
+        
+        # Save to file for release
+        $notes | Out-File -FilePath "release-notes.md" -Encoding UTF8
+        
+        # Also output for GitHub
+        $notesEscaped = $notes -replace "`r`n", "%0A" -replace "`n", "%0A"
+        echo "notes<<EOF" >> $env:GITHUB_OUTPUT
+        echo $notes >> $env:GITHUB_OUTPUT
+        echo "EOF" >> $env:GITHUB_OUTPUT
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.version.outputs.version }}
+        release_name: ng-deploy v${{ steps.version.outputs.version }}
+        body_path: release-notes.md
+        draft: false
+        prerelease: false
+
+    - name: Upload MSI Installer
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ng-deploy-installer.msi
+        asset_name: ng-deploy-installer.msi
+        asset_content_type: application/octet-stream
+
+    - name: Upload Standalone Executable
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: dist/ng-deploy.exe
+        asset_name: ng-deploy.exe
+        asset_content_type: application/octet-stream
+
+    - name: Update Current Version
+      if: success()
+      run: |
+        $newVersion = "${{ steps.version.outputs.version }}"
+        echo "Updating version-current.txt to: $newVersion"
+        $newVersion | Out-File -FilePath "version-current.txt" -Encoding UTF8 -NoNewline
+        
+        # Commit version update
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add version-current.txt
+        git commit -m "Update current version to $newVersion [skip ci]" || exit 0
+        git push || exit 0
+
+    - name: Create Workflow Summary
+      if: always()
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $status = if ("${{ job.status }}" -eq "success") { "✅ SUCCESS" } else { "❌ FAILED" }
+        
+        $summary = @"
+        # ng-deploy Release Build $status
+        
+        **Version**: $version  
+        **Trigger**: ${{ github.event_name }}  
+        **Branch**: ${{ github.ref_name }}  
+        **Commit**: ${{ github.sha }}
+        
+        ## 📦 Artifacts Created
+        - ``ng-deploy.exe`` (Standalone executable)
+        - ``ng-deploy-installer.msi`` (Windows installer)
+        
+        ## 🔗 Release
+        [${{ steps.create_release.outputs.html_url }}](${{ steps.create_release.outputs.html_url }})
+        "@
+        
+        echo $summary >> $env:GITHUB_STEP_SUMMARY

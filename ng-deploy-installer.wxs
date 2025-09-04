@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" 
+           Name="Angular Deploy Utility (ng-deploy)" 
+           Language="1033" 
+           Version="$(var.ProductVersion)" 
+           Manufacturer="Angular Deploy Utility" 
+           UpgradeCode="12345678-1234-1234-1234-123456789012">
+    
+    <Package InstallerVersion="200" 
+             Compressed="yes" 
+             InstallScope="perMachine"
+             Description="Angular Build and Deploy Utility - Automated Angular deployment to remote servers"
+             Comments="ng-deploy - Professional Angular deployment utility with network share support" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Installation Directory Structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="ng-deploy">
+          <Component Id="NgDeployExecutable" Guid="*">
+            <File Id="NgDeployExe" 
+                  Source="dist\ng-deploy.exe" 
+                  KeyPath="yes"
+                  Name="ng-deploy.exe" />
+          </Component>
+          
+          <Component Id="ReadmeFile" Guid="*">
+            <File Id="ReadmeMd" 
+                  Source="README.md" 
+                  KeyPath="yes"
+                  Name="README.md" />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu Shortcut -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Angular Deploy Utility">
+          <Component Id="ApplicationShortcut" Guid="*">
+            <Shortcut Id="ApplicationStartMenuShortcut"
+                     Name="ng-deploy"
+                     Description="Angular Build and Deploy Utility"
+                     Target="[INSTALLFOLDER]ng-deploy.exe"
+                     WorkingDirectory="INSTALLFOLDER"
+                     Icon="NgDeployIcon.exe"
+                     IconIndex="0" />
+            
+            <Shortcut Id="ReadmeStartMenuShortcut"
+                     Name="ng-deploy Documentation"
+                     Description="Angular Deploy Utility Documentation"
+                     Target="[INSTALLFOLDER]README.md" />
+            
+            <RemoveFolder Id="ApplicationProgramsFolder" On="uninstall"/>
+            <RegistryValue Root="HKCU" 
+                          Key="Software\Microsoft\ng-deploy" 
+                          Name="installed" 
+                          Type="integer" 
+                          Value="1" 
+                          KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <!-- Desktop Shortcut (Optional) -->
+      <Directory Id="DesktopFolder" Name="Desktop">
+        <Component Id="DesktopShortcut" Guid="*">
+          <Shortcut Id="DesktopShortcut"
+                   Name="ng-deploy"
+                   Description="Angular Build and Deploy Utility"
+                   Target="[INSTALLFOLDER]ng-deploy.exe"
+                   WorkingDirectory="INSTALLFOLDER"
+                   Icon="NgDeployIcon.exe"
+                   IconIndex="0" />
+          <RegistryValue Root="HKCU" 
+                        Key="Software\Microsoft\ng-deploy" 
+                        Name="desktop" 
+                        Type="integer" 
+                        Value="1" 
+                        KeyPath="yes"/>
+        </Component>
+      </Directory>
+    </Directory>
+
+    <!-- PATH Environment Variable Component -->
+    <Component Id="PathEnvironment" Guid="*" Directory="INSTALLFOLDER">
+      <Environment Id="PATH" 
+                   Name="PATH" 
+                   Value="[INSTALLFOLDER]" 
+                   Permanent="no" 
+                   Part="last" 
+                   Action="set" 
+                   System="yes" />
+      <RegistryValue Root="HKLM" 
+                    Key="Software\Microsoft\ng-deploy" 
+                    Name="path_added" 
+                    Type="integer" 
+                    Value="1" 
+                    KeyPath="yes"/>
+    </Component>
+
+    <!-- Features Definition -->
+    <Feature Id="ProductFeature" Title="ng-deploy Core" Level="1" Description="Core ng-deploy executable and documentation">
+      <ComponentRef Id="NgDeployExecutable" />
+      <ComponentRef Id="ReadmeFile" />
+      <ComponentRef Id="ApplicationShortcut" />
+    </Feature>
+
+    <Feature Id="PathFeature" Title="Add to System PATH" Level="2" Description="Add ng-deploy to system PATH so you can run it from any directory">
+      <ComponentRef Id="PathEnvironment" />
+    </Feature>
+
+    <Feature Id="DesktopShortcutFeature" Title="Desktop Shortcut" Level="2" Description="Create a desktop shortcut for ng-deploy">
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <!-- Icon -->
+    <Icon Id="NgDeployIcon.exe" SourceFile="dist\ng-deploy.exe" />
+
+    <!-- UI Configuration -->
+    <UIRef Id="WixUI_FeatureTree" />
+    <UIRef Id="WixUI_ErrorProgressText" />
+    
+    <!-- Custom UI Text -->
+    <!-- <WixVariable Id="WixUILicenseRtf" Value="license.rtf" /> -->
+    <!-- <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" /> -->
+    <!-- <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" /> -->
+
+    <!-- Property for installation folder -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!-- Custom Properties -->
+    <Property Id="ARPPRODUCTICON" Value="NgDeployIcon.exe" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/your-repo/ng-deploy" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/your-repo/ng-deploy" />
+    <Property Id="ARPNOMODIFY" Value="yes" Secure="yes" />
+    
+    <!-- Launch Conditions -->
+    <Condition Message="This application is only supported on Windows 10 and later.">
+      <![CDATA[Installed OR (VersionNT >= 1000)]]>
+    </Condition>
+  </Product>
+</Wix>
