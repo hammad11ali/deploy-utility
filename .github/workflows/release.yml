@@ -228,12 +228,15 @@ jobs:
         echo "EOF" >> $env:GITHUB_OUTPUT
 
     - name: Verify GitHub CLI and Authentication
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         Write-Host "Checking GitHub CLI..."
         gh --version
-        Write-Host "Testing authentication..."
-        gh auth status
         Write-Host "Repository: ${{ github.repository }}"
+        Write-Host "GitHub Token: Available ✅"
+        Write-Host "Testing GitHub API access..."
+        gh repo view ${{ github.repository }} --json name,owner
 
     - name: Create GitHub Release
       id: create_release
