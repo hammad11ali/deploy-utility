@@ -23,6 +23,11 @@ on:
       - 'deploy.py'
       - 'ng-deploy-installer.wxs'
 
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 env:
   PYTHON_VERSION: '3.10'
 
@@ -222,37 +227,52 @@ jobs:
         echo $notes >> $env:GITHUB_OUTPUT
         echo "EOF" >> $env:GITHUB_OUTPUT
 
+    - name: Verify GitHub CLI and Authentication
+      run: |
+        Write-Host "Checking GitHub CLI..."
+        gh --version
+        Write-Host "Testing authentication..."
+        gh auth status
+        Write-Host "Repository: ${{ github.repository }}"
+
     - name: Create GitHub Release
       id: create_release
-      uses: actions/create-release@v1
+      shell: powershell
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ steps.version.outputs.version }}
-        release_name: ng-deploy v${{ steps.version.outputs.version }}
-        body_path: release-notes.md
-        draft: false
-        prerelease: false
-
-    - name: Upload MSI Installer
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ng-deploy-installer.msi
-        asset_name: ng-deploy-installer.msi
-        asset_content_type: application/octet-stream
-
-    - name: Upload Standalone Executable
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: dist/ng-deploy.exe
-        asset_name: ng-deploy.exe
-        asset_content_type: application/octet-stream
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        $tagName = "v$version"
+        $releaseName = "ng-deploy v$version"
+        
+        Write-Host "Creating release: $releaseName"
+        Write-Host "Tag: $tagName"
+        
+        # Verify files exist
+        if (!(Test-Path "ng-deploy-installer.msi")) {
+          throw "ng-deploy-installer.msi not found!"
+        }
+        if (!(Test-Path "dist/ng-deploy.exe")) {
+          throw "dist/ng-deploy.exe not found!"
+        }
+        
+        Write-Host "Files verified, creating release..."
+        
+        # Create release using GitHub CLI
+        gh release create $tagName `
+          --title "$releaseName" `
+          --notes-file "release-notes.md" `
+          --draft=false `
+          --prerelease=false `
+          "ng-deploy-installer.msi" `
+          "dist/ng-deploy.exe"
+        
+        if ($LASTEXITCODE -ne 0) {
+          throw "Failed to create release"
+        }
+        
+        Write-Host "Release created successfully!"
+        echo "upload_url=https://github.com/${{ github.repository }}/releases/tag/$tagName" >> $env:GITHUB_OUTPUT
 
     - name: Update Current Version
       if: success()
